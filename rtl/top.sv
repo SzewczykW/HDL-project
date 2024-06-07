@@ -65,23 +65,23 @@ module top (
         .write_enable(write_enable),
         .read_enable(read_enable),
         .busy(busy),
-        .s_axil_awaddr(s_axil_awaddr),
-        .s_axil_awvalid(s_axil_awvalid),
-        .s_axil_awready(s_axil_awready),
-        .s_axil_wdata(s_axil_wdata),
-        .s_axil_wstrb(s_axil_wstrb),
-        .s_axil_wvalid(s_axil_wvalid),
-        .s_axil_wready(s_axil_wready),
-        .s_axil_bresp(s_axil_bresp),
-        .s_axil_bvalid(s_axil_bvalid),
-        .s_axil_bready(s_axil_bready),
-        .s_axil_araddr(s_axil_araddr),
-        .s_axil_arvalid(s_axil_arvalid),
-        .s_axil_arready(s_axil_arready),
-        .s_axil_rdata(s_axil_rdata),
-        .s_axil_rresp(s_axil_rresp),
-        .s_axil_rvalid(s_axil_rvalid),
-        .s_axil_rready(s_axil_rready)
+        .m_axil_awaddr(s_axil_awaddr),
+        .m_axil_awvalid(s_axil_awvalid),
+        .m_axil_awready(s_axil_awready),
+        .m_axil_wdata(s_axil_wdata),
+        .m_axil_wstrb(s_axil_wstrb),
+        .m_axil_wvalid(s_axil_wvalid),
+        .m_axil_wready(s_axil_wready),
+        .m_axil_bresp(s_axil_bresp),
+        .m_axil_bvalid(s_axil_bvalid),
+        .m_axil_bready(s_axil_bready),
+        .m_axil_araddr(s_axil_araddr),
+        .m_axil_arvalid(s_axil_arvalid),
+        .m_axil_arready(s_axil_arready),
+        .m_axil_rdata(s_axil_rdata),
+        .m_axil_rresp(s_axil_rresp),
+        .m_axil_rvalid(s_axil_rvalid),
+        .m_axil_rready(s_axil_rready)
     );
 
     // Instantiate i2c_master_axil
@@ -135,11 +135,13 @@ module top (
     
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            test_state <= START;
+            test_state <= IDLE;
             leds <= 8'b0000_0000;
             start <= 0;
             write_enable <= 0;
             read_enable <= 0;
+            mem_address <= 11'h000;
+            data_in <= 32'h00000000;
          end else begin
             case (test_state)
                 IDLE: begin
@@ -155,7 +157,7 @@ module top (
                 WRITE: begin
                     leds <= 8'b0000_0011;
                     write_enable <= 1;
-                    if (s_axil_bvalid == 1) begin
+                    if (~busy) begin
                         leds <= 8'b0000_0111;
                         write_enable <= 0;
                         test_state <= READ;
@@ -164,7 +166,7 @@ module top (
                 READ: begin
                     leds <= 8'b0000_1111;
                     read_enable <= 1;
-                    if (s_axil_rvalid == 1) begin
+                    if (~busy) begin
                         leds <= 8'b0001_1111;
                         read_enable <= 0;
                         test_state <= CHECK_READ;

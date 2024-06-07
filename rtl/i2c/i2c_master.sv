@@ -1,3 +1,27 @@
+/*
+
+Copyright (c) 2015-2017 Alex Forencich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+*/
+
 `timescale 1ns / 1ps
 
 /*
@@ -53,6 +77,108 @@ module i2c_master (
     input  wire [15:0] prescale,
     input  wire        stop_on_idle
 );
+
+/*
+
+I2C
+
+Read
+    __    ___ ___ ___ ___ ___ ___ ___         ___ ___ ___ ___ ___ ___ ___ ___     ___ ___ ___ ___ ___ ___ ___ ___        __
+sda   \__/_6_X_5_X_4_X_3_X_2_X_1_X_0_\_R___A_/_7_X_6_X_5_X_4_X_3_X_2_X_1_X_0_\_A_/_7_X_6_X_5_X_4_X_3_X_2_X_1_X_0_\_A____/
+    ____   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   ____
+scl  ST \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ SP
+
+Write
+    __    ___ ___ ___ ___ ___ ___ ___ ___     ___ ___ ___ ___ ___ ___ ___ ___     ___ ___ ___ ___ ___ ___ ___ ___ ___    __
+sda   \__/_6_X_5_X_4_X_3_X_2_X_1_X_0_/ W \_A_/_7_X_6_X_5_X_4_X_3_X_2_X_1_X_0_\_A_/_7_X_6_X_5_X_4_X_3_X_2_X_1_X_0_/ N \__/
+    ____   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   ____
+scl  ST \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ SP
+
+Commands:
+
+read
+    read data byte
+    set start to force generation of a start condition
+    start is implied when bus is inactive or active with write or different address
+    set stop to issue a stop condition after reading current byte
+    if stop is set with read command, then m_axis_data_tlast will be set
+
+write
+    write data byte
+    set start to force generation of a start condition
+    start is implied when bus is inactive or active with read or different address
+    set stop to issue a stop condition after writing current byte
+
+write multiple
+    write multiple data bytes (until s_axis_data_tlast)
+    set start to force generation of a start condition
+    start is implied when bus is inactive or active with read or different address
+    set stop to issue a stop condition after writing block
+
+stop
+    issue stop condition if bus is active
+
+Status:
+
+busy
+    module is communicating over the bus
+
+bus_control
+    module has control of bus in active state
+
+bus_active
+    bus is active, not necessarily controlled by this module
+
+missed_ack
+    strobed when a slave ack is missed
+
+Parameters:
+
+prescale
+    set prescale to 1/4 of the minimum clock period in units
+    of input clk cycles (prescale = Fclk / (FI2Cclk * 4))
+
+stop_on_idle
+    automatically issue stop when command input is not valid
+
+Example of interfacing with tristate pins:
+(this will work for any tristate bus)
+
+assign scl_i = scl_pin;
+assign scl_pin = scl_t ? 1'bz : scl_o;
+assign sda_i = sda_pin;
+assign sda_pin = sda_t ? 1'bz : sda_o;
+
+Equivalent code that does not use *_t connections:
+(we can get away with this because I2C is open-drain)
+
+assign scl_i = scl_pin;
+assign scl_pin = scl_o ? 1'bz : 1'b0;
+assign sda_i = sda_pin;
+assign sda_pin = sda_o ? 1'bz : 1'b0;
+
+Example of two interconnected I2C devices:
+
+assign scl_1_i = scl_1_o & scl_2_o;
+assign scl_2_i = scl_1_o & scl_2_o;
+assign sda_1_i = sda_1_o & sda_2_o;
+assign sda_2_i = sda_1_o & sda_2_o;
+
+Example of two I2C devices sharing the same pins:
+
+assign scl_1_i = scl_pin;
+assign scl_2_i = scl_pin;
+assign scl_pin = (scl_1_o & scl_2_o) ? 1'bz : 1'b0;
+assign sda_1_i = sda_pin;
+assign sda_2_i = sda_pin;
+assign sda_pin = (sda_1_o & sda_2_o) ? 1'bz : 1'b0;
+
+Notes:
+
+scl_o should not be connected directly to scl_i, only via AND logic or a tristate
+I/O pin.  This would prevent devices from stretching the clock period.
+
+*/
 
 // FSM states
 typedef enum logic [3:0] {
