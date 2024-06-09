@@ -13,7 +13,8 @@ module top (
 
     // Internal signals for AXI master and I2C communication
     reg start;
-    reg [10:0] mem_address;  // 11-bit address for 2KB memory
+    // Needs to be 16-bit reg if FM24CLXX_TYPE > 2048
+    reg [7:0] mem_address;   // 8-bit reg for word address
     reg [31:0] data_in;      // Data to write (32 bits)
     wire [31:0] data_out;    // Data read (32 bits)
     reg write_enable;        // Write operation enable
@@ -65,27 +66,30 @@ module top (
         .write_enable(write_enable),
         .read_enable(read_enable),
         .busy(busy),
-        .m_axil_awaddr(s_axil_awaddr),
-        .m_axil_awvalid(s_axil_awvalid),
-        .m_axil_awready(s_axil_awready),
-        .m_axil_wdata(s_axil_wdata),
-        .m_axil_wstrb(s_axil_wstrb),
-        .m_axil_wvalid(s_axil_wvalid),
-        .m_axil_wready(s_axil_wready),
-        .m_axil_bresp(s_axil_bresp),
-        .m_axil_bvalid(s_axil_bvalid),
-        .m_axil_bready(s_axil_bready),
-        .m_axil_araddr(s_axil_araddr),
-        .m_axil_arvalid(s_axil_arvalid),
-        .m_axil_arready(s_axil_arready),
-        .m_axil_rdata(s_axil_rdata),
-        .m_axil_rresp(s_axil_rresp),
-        .m_axil_rvalid(s_axil_rvalid),
-        .m_axil_rready(s_axil_rready)
+        .s_axil_awaddr(s_axil_awaddr),
+        .s_axil_awvalid(s_axil_awvalid),
+        .s_axil_awready(s_axil_awready),
+        .s_axil_wdata(s_axil_wdata),
+        .s_axil_wstrb(s_axil_wstrb),
+        .s_axil_wvalid(s_axil_wvalid),
+        .s_axil_wready(s_axil_wready),
+        .s_axil_bresp(s_axil_bresp),
+        .s_axil_bvalid(s_axil_bvalid),
+        .s_axil_bready(s_axil_bready),
+        .s_axil_araddr(s_axil_araddr),
+        .s_axil_arvalid(s_axil_arvalid),
+        .s_axil_arready(s_axil_arready),
+        .s_axil_rdata(s_axil_rdata),
+        .s_axil_rresp(s_axil_rresp),
+        .s_axil_rvalid(s_axil_rvalid),
+        .s_axil_rready(s_axil_rready)
     );
 
     // Instantiate i2c_master_axil
-    i2c_master_axil i2c (
+    i2c_master_axil #(
+      .FIXED_PRESCALE(1)
+    ) 
+    i2c (
         .clk(clk),
         .rst(rst),
         .s_axil_awaddr(s_axil_awaddr),
@@ -113,13 +117,10 @@ module top (
         .i2c_sda_t(sda_t)
     );
 
-    // Tri-state buffer for SDA
-    assign sda = sda_t ? 1'bz : sda_o;
-    assign sda_i = sda;
-
-    // Tri-state buffer for SCL
     assign scl = scl_t ? 1'bz : scl_o;
     assign scl_i = scl;
+    assign sda = sda_t ? 1'bz : sda_o;
+    assign sda_i = sda;
 
     // Initialize internal signals for testing
     typedef enum logic [2:0] {
@@ -140,13 +141,13 @@ module top (
             start <= 0;
             write_enable <= 0;
             read_enable <= 0;
-            mem_address <= 11'h000;
+            mem_address <= 8'h00;
             data_in <= 32'h00000000;
          end else begin
             case (test_state)
                 IDLE: begin
-                   mem_address <= 11'h005;
-                   data_in <= 32'hA5A5A5A5;
+                   mem_address <= 8'h04;
+                   data_in <= 32'h000000A5;
                    test_state <= START;
                 end
                 START: begin
@@ -174,7 +175,7 @@ module top (
                 end
                 CHECK_READ: begin
                     leds <= 8'b0011_1111;
-                    if (data_in == data_out) begin
+                    if (data_in[7:0] == data_out[7:0]) begin
                         leds <= 8'b0111_1111;
                         test_state <= DONE;
                     end

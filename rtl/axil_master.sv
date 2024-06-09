@@ -10,7 +10,8 @@ module axil_master #(
     input wire clk,
     input wire rst,
     input wire start,
-    input wire [10:0] mem_address,  // 11-bit address for 2KB memory
+    // Needs to be 16-bit reg if FM24CLXX_TYPE > 2048
+    input wire [7:0] mem_address,   // 8-bit word address register
     input wire [31:0] data_in,      // Data to write
     output reg [31:0] data_out,     // Data read
     input wire write_enable,        // Write operation enable
@@ -18,50 +19,44 @@ module axil_master #(
     output reg busy,                // Driver busy signal
 
     // AXI4Lite Interface signals to connect to I2C master
-    output reg [3:0] m_axil_awaddr,
-    output reg m_axil_awvalid,
-    input wire m_axil_awready,
-    output reg [31:0] m_axil_wdata,
-    output reg [3:0] m_axil_wstrb,  // Write strobe signal
-    output reg m_axil_wvalid,
-    input wire m_axil_wready,
-    input wire [1:0] m_axil_bresp,
-    input wire m_axil_bvalid,
-    output reg m_axil_bready,
-    output reg [3:0] m_axil_araddr,
-    output reg m_axil_arvalid,
-    input wire m_axil_arready,
-    input wire [31:0] m_axil_rdata,
-    input wire [1:0] m_axil_rresp,
-    input wire m_axil_rvalid,
-    output reg m_axil_rready
+    output reg [3:0] s_axil_awaddr,
+    output reg s_axil_awvalid,
+    input wire s_axil_awready,
+    output reg [31:0] s_axil_wdata,
+    output reg [3:0] s_axil_wstrb,  // Write strobe signal
+    output reg s_axil_wvalid,
+    input wire s_axil_wready,
+    input wire [1:0] s_axil_bresp,
+    input wire s_axil_bvalid,
+    output reg s_axil_bready,
+    output reg [3:0] s_axil_araddr,
+    output reg s_axil_arvalid,
+    input wire s_axil_arready,
+    input wire [31:0] s_axil_rdata,
+    input wire [1:0] s_axil_rresp,
+    input wire s_axil_rvalid,
+    output reg s_axil_rready
 );
 
     // State definitions
-    typedef enum logic [4:0] {
+    typedef enum logic [3:0] {
         IDLE,
-        START,
-        SEND_DEVICE_ADDR_HIGH,
-        SEND_DEVICE_ADDR_LOW,
-        WAIT_AWREADY,
-        SEND_MEM_ADDR,
-        WAIT_WREADY_MEM,
+        SET_PRESCALE,
+		START,
+        WRITE_DEV_ADDR,
+        WRITE_MEM_ADDR,
         WRITE_DATA,
-		WAIT_WREADY_DATA,
-		WAIT_BVALID_DATA,
         READ_DATA_REPEATED_START,
-        SEND_DEVICE_ADDR_HIGH_READ,
-        SEND_DEVICE_ADDR_LOW_READ,
+        SET_HIGH_READ_ACK,
         READ_DATA,
-        WAIT_RVALID,
         STOP
     } state_t;
 
     state_t current_state = IDLE, next_state;
 
     // Registers for address and data
-    reg [7:0] device_addr;
-    reg [15:0] mem_addr;
+    reg [6:0] device_addr;
+    reg [7:0] mem_addr;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -79,22 +74,22 @@ module axil_master #(
 
     always_comb begin
         // Internal registers
-        device_addr = 8'b0;
-        mem_addr = 16'b0;
+        device_addr = 7'b0;
+        mem_addr = 8'b0;
         
         // User outputs
         data_out = 32'b0;
         
         // AXIL signals
-        m_axil_awaddr = 4'b0;
-        m_axil_awvalid = 0;
-        m_axil_wdata = 32'b0;
-        m_axil_wstrb = 4'b0000; // Default write strobe for 32-bit data
-        m_axil_wvalid = 0;
-        m_axil_bready = 0;
-        m_axil_araddr = 4'b0;
-        m_axil_arvalid = 0;
-        m_axil_rready = 0;
+        s_axil_awaddr = 4'b0;
+        s_axil_awvalid = 0;
+        s_axil_wdata = 32'b0;
+        s_axil_wstrb = 4'b0000; // Default write strobe for 32-bit data
+        s_axil_wvalid = 0;
+        s_axil_bready = 0;
+        s_axil_araddr = 4'b0;
+        s_axil_arvalid = 0;
+        s_axil_rready = 0;
         
         // Next state of FSM
         next_state = current_state;
@@ -102,96 +97,115 @@ module axil_master #(
         case (current_state)
             IDLE: begin
                 if (start) begin
+                    next_state = SET_PRESCALE;
+                end
+            end
+            SET_PRESCALE: begin
+                // Set the prescale value to achieve ~12.5 kHz I2C clock
+                s_axil_awaddr = 4'hC; // Address for prescale register
+                s_axil_wdata = 32'd2000; // Prescale value
+                s_axil_wstrb = 4'b0011;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
                     next_state = START;
-                    device_addr = {4'b1010, FM24CLXX_ADDR, 1'b0};
-                    mem_addr = mem_address;
                 end
             end
-            START: begin
-                if (write_enable || read_enable) begin
-                    next_state = SEND_DEVICE_ADDR_HIGH;
-                end else begin
-                    next_state = IDLE;
+			START: begin
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+				s_axil_awaddr = 4'h4; // Address for command register
+	  			s_axil_wdata = {23'b0, 1'b1, 1'b0, device_addr}; // cmd_start
+				s_axil_wstrb = 4'b0011;
+				s_axil_awvalid = 1'b1;
+				s_axil_wvalid = 1'b1;
+				if (s_axil_awaddr && s_axil_wready) begin
+				    next_state = WRITE_DEV_ADDR;
+				end
+			end
+            WRITE_DEV_ADDR: begin
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axil_awaddr = 4'h4; // Address for command register
+                s_axil_wdata = {21'b0, 1'b1, 3'b0, device_addr}; // cmd_write
+                s_axil_wstrb = 4'b0011;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
+                    next_state = WRITE_MEM_ADDR;
                 end
             end
-            SEND_DEVICE_ADDR_HIGH: begin
-                m_axil_awaddr = device_addr[7:4];
-                m_axil_awvalid = 1;
-                next_state = SEND_DEVICE_ADDR_LOW;
-            end
-            SEND_DEVICE_ADDR_LOW: begin
-                if (m_axil_awready) begin
-                    m_axil_awaddr = device_addr[3:0];
-                    m_axil_awvalid = 1;
-                    next_state = WAIT_AWREADY;
-                end
-            end
-            WAIT_AWREADY: begin
-                if (m_axil_awready) begin
-                    next_state = SEND_MEM_ADDR;
-                end
-            end
-            SEND_MEM_ADDR: begin
-                m_axil_wstrb = 4'b0011;
-                m_axil_wdata = {16'b0, mem_addr};
-                m_axil_wvalid = 1;
-                next_state = WAIT_WREADY_MEM;
-            end
-            WAIT_WREADY_MEM: begin
-                if (m_axil_wready) begin
+            WRITE_MEM_ADDR: begin
+                // Send the memory address
+                mem_addr = mem_address;
+                s_axil_awaddr = 4'h8; // Address for data register
+                s_axil_wdata = {24'b0, mem_addr};
+                s_axil_wstrb = 4'b0001;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
                     if (write_enable) begin
                         next_state = WRITE_DATA;
                     end else if (read_enable) begin
                         next_state = READ_DATA_REPEATED_START;
                     end
-                end 
-            end   
-            WRITE_DATA: begin
-                m_axil_wstrb = 4'b1111;
-                m_axil_wdata = data_in;
-                m_axil_wvalid = 1;
-				next_state = WAIT_WREADY_DATA;
-            end
-			WAIT_WREADY_DATA: begin
-                if (m_axil_wready) begin
-                    m_axil_bready = 1;
-                    next_state = WAIT_BVALID_DATA;
                 end
-			end
-			WAIT_BVALID_DATA: begin
-			    if (m_axil_bvalid) begin
+            end
+            WRITE_DATA: begin
+                // Write data
+                s_axil_awaddr = 4'h8; // Address for data register
+                s_axil_wdata = data_in;
+                s_axil_wstrb = 4'b1111;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
                     next_state = STOP;
                 end
             end
             READ_DATA_REPEATED_START: begin
-                device_addr = {4'b1010, FM24CLXX_ADDR, 1'b1};  // Device address with read bit
-                next_state = SEND_DEVICE_ADDR_HIGH_READ;
-            end
-            SEND_DEVICE_ADDR_HIGH_READ: begin
-                m_axil_araddr = device_addr[7:4];
-				m_axil_arvalid = 1;
-				next_state = SEND_DEVICE_ADDR_LOW_READ;
-            end
-			SEND_DEVICE_ADDR_LOW_READ: begin
-				if (m_axil_arready) begin
-					m_axil_araddr = device_addr[3:0];
-					next_state = READ_DATA;
+                // Issue repeated start condition for read
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axil_awaddr = 4'h4; // Address for command register
+                s_axil_wdata = {22'b0, 2'b1, 1'b0, device_addr}; // cmd_read
+                s_axil_wstrb = 4'b0011;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
+                    next_state = READ_DATA;
                 end
-			end
-            READ_DATA: begin
-                m_axil_rready = 1;
-                next_state = WAIT_RVALID;
             end
-            WAIT_RVALID: begin
-                if (m_axil_rvalid) begin
-					data_out = m_axil_rdata;
+            SET_HIGH_READ_ACK: begin
+                // Issue high ack as fm24clxx returns high pulse as result from read
+                s_axil_awaddr = 4'h0; // Address for status register
+                s_axil_wdata = {28'b0, 1'b1, 3'b0}; // missed_ack
+                s_axil_wstrb = 4'b0011;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
+                    next_state = READ_DATA;
+                end
+            end
+            READ_DATA: begin
+                s_axil_araddr = 4'h8; // Address for data register
+                s_axil_arvalid = 1'b1;
+                s_axil_rready = 1'b1;
+                if (s_axil_arready && s_axil_rvalid) begin
+                    data_out = s_axil_rdata;
                     next_state = STOP;
                 end
             end
             STOP: begin
-                next_state = IDLE;
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axil_awaddr = 4'h4; // Address for command register
+                s_axil_wdata = {19'b0, 1'b1, 5'b0, device_addr}; // cmd_stop
+                s_axil_wstrb = 4'b0011;
+                s_axil_awvalid = 1'b1;
+                s_axil_wvalid = 1'b1;
+                if (s_axil_awready && s_axil_wready) begin
+                    next_state = IDLE;
+                end
             end
+            default: next_state = IDLE;
         endcase
     end
 
 endmodule
+

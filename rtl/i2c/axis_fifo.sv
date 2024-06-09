@@ -22,6 +22,8 @@ THE SOFTWARE.
 
 */
 
+// Language: Verilog 2001
+
 `timescale 1ns / 1ps
 
 /*
@@ -110,7 +112,7 @@ module axis_fifo #
     output wire                   status_empty
 );
 
-localparam ADDR_WIDTH = (KEEP_ENABLE && KEEP_WIDTH > 1) ? $clog2(DEPTH/KEEP_WIDTH) : $clog2(DEPTH);
+parameter ADDR_WIDTH = (KEEP_ENABLE && KEEP_WIDTH > 1) ? $clog2(DEPTH/KEEP_WIDTH) : $clog2(DEPTH);
 
 // check configuration
 initial begin

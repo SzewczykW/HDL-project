@@ -22,6 +22,8 @@ THE SOFTWARE.
 
 */
 
+// Language: Verilog 2001
+
 `timescale 1ns / 1ps
 
 /*
@@ -180,45 +182,41 @@ I/O pin.  This would prevent devices from stretching the clock period.
 
 */
 
-// FSM states
-typedef enum logic [3:0] {
-    STATE_IDLE          = 4'd0,
-    STATE_ACTIVE_WRITE  = 4'd1,
-    STATE_ACTIVE_READ   = 4'd2,
-    STATE_START_WAIT    = 4'd3,
-    STATE_START         = 4'd4,
-    STATE_ADDRESS_1     = 4'd5,
-    STATE_ADDRESS_2     = 4'd6,
-    STATE_WRITE_1       = 4'd7,
-    STATE_WRITE_2       = 4'd8,
-    STATE_WRITE_3       = 4'd9,
-    STATE_READ          = 4'd10,
-    STATE_STOP          = 4'd11
-} state_t;
+localparam [4:0]
+    STATE_IDLE = 4'd0,
+    STATE_ACTIVE_WRITE = 4'd1,
+    STATE_ACTIVE_READ = 4'd2,
+    STATE_START_WAIT = 4'd3,
+    STATE_START = 4'd4,
+    STATE_ADDRESS_1 = 4'd5,
+    STATE_ADDRESS_2 = 4'd6,
+    STATE_WRITE_1 = 4'd7,
+    STATE_WRITE_2 = 4'd8,
+    STATE_WRITE_3 = 4'd9,
+    STATE_READ = 4'd10,
+    STATE_STOP = 4'd11;
 
-state_t state_reg = STATE_IDLE, state_next;
+reg [4:0] state_reg = STATE_IDLE, state_next;
 
-// I2C states
-typedef enum logic [3:0] {
-    PHY_STATE_IDLE             = 4'd0,
-    PHY_STATE_ACTIVE           = 4'd1,
-    PHY_STATE_REPEATED_START_1 = 4'd2,
-    PHY_STATE_REPEATED_START_2 = 4'd3,
-    PHY_STATE_START_1          = 4'd4,
-    PHY_STATE_START_2          = 4'd5,
-    PHY_STATE_WRITE_BIT_1      = 4'd6,
-    PHY_STATE_WRITE_BIT_2      = 4'd7,
-    PHY_STATE_WRITE_BIT_3      = 4'd8,
-    PHY_STATE_READ_BIT_1       = 4'd9,
-    PHY_STATE_READ_BIT_2       = 4'd10,
-    PHY_STATE_READ_BIT_3       = 4'd11,
-    PHY_STATE_READ_BIT_4       = 4'd12,
-    PHY_STATE_STOP_1           = 4'd13,
-    PHY_STATE_STOP_2           = 4'd14,
-    PHY_STATE_STOP_3           = 4'd15
-} phy_state_t;
+localparam [4:0]
+    PHY_STATE_IDLE = 5'd0,
+    PHY_STATE_ACTIVE = 5'd1,
+    PHY_STATE_REPEATED_START_1 = 5'd2,
+    PHY_STATE_REPEATED_START_2 = 5'd3,
+    PHY_STATE_START_1 = 5'd4,
+    PHY_STATE_START_2 = 5'd5,
+    PHY_STATE_WRITE_BIT_1 = 5'd6,
+    PHY_STATE_WRITE_BIT_2 = 5'd7,
+    PHY_STATE_WRITE_BIT_3 = 5'd8,
+    PHY_STATE_READ_BIT_1 = 5'd9,
+    PHY_STATE_READ_BIT_2 = 5'd10,
+    PHY_STATE_READ_BIT_3 = 5'd11,
+    PHY_STATE_READ_BIT_4 = 5'd12,
+    PHY_STATE_STOP_1 = 5'd13,
+    PHY_STATE_STOP_2 = 5'd14,
+    PHY_STATE_STOP_3 = 5'd15;
 
-phy_state_t phy_state_reg = PHY_STATE_IDLE, phy_state_next;
+reg [4:0] phy_state_reg = STATE_IDLE, phy_state_next;
 
 reg phy_start_bit;
 reg phy_stop_bit;
@@ -243,7 +241,7 @@ reg delay_scl_reg = 1'b0, delay_scl_next;
 reg delay_sda_reg = 1'b0, delay_sda_next;
 
 reg [3:0] bit_count_reg = 4'd0, bit_count_next;
- 
+
 reg s_axis_cmd_ready_reg = 1'b0, s_axis_cmd_ready_next;
 
 reg s_axis_data_tready_reg = 1'b0, s_axis_data_tready_next;
@@ -864,7 +862,7 @@ always @(posedge clk) begin
 
     last_scl_i_reg <= scl_i_reg;
     last_sda_i_reg <= sda_i_reg;
-    
+
     busy_reg <= !(state_reg == STATE_IDLE || state_reg == STATE_ACTIVE_WRITE || state_reg == STATE_ACTIVE_READ) || !(phy_state_reg == PHY_STATE_IDLE || phy_state_reg == PHY_STATE_ACTIVE);
 
     if (start_bit) begin

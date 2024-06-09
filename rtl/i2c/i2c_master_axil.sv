@@ -22,8 +22,7 @@ THE SOFTWARE.
 
 */
 
-// Language: SystemVerilog
-
+// Language: Verilog 2001
 
 `timescale 1ns / 1ps
 
@@ -78,7 +77,6 @@ module i2c_master_axil #
     output wire        i2c_sda_o,
     output wire        i2c_sda_t
 );
-
 /*
 
 I2C
