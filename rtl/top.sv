@@ -11,33 +11,33 @@ module top (
     output reg [7:0] leds // Debug LEDs
 );
 
-    // Internal signals for AXI master and I2C communication
     reg start;
     // Needs to be 16-bit reg if FM24CLXX_TYPE > 2048
     reg  [7:0]  mem_address;    // 8-bit reg for word address
     reg  [7:0]  data_in;        // Data to write (32 bits)
-    wire [7:0]  data_out;       // Data read (32 bits)
+    reg [7:0]  data_out;       // Data read (32 bits)
     reg         write_enable;   // Write operation enable
     reg         read_enable;    // Read operation enable
+    reg         busy;
 
     // AXIS signals
-    wire [6:0]  s_axis_cmd_address;
-    wire        s_axis_cmd_start;
-    wire        s_axis_cmd_read;
-    wire        s_axis_cmd_write;
-    wire        s_axis_cmd_write_multiple;
-    wire        s_axis_cmd_stop;
-    wire        s_axis_cmd_valid;
+    reg [6:0]   s_axis_cmd_address;
+    reg         s_axis_cmd_start;
+    reg         s_axis_cmd_read;
+    reg         s_axis_cmd_write;
+    reg         s_axis_cmd_write_multiple;
+    reg         s_axis_cmd_stop;
+    reg         s_axis_cmd_valid;
     wire        s_axis_cmd_ready;
 
-    wire [7:0]  s_axis_data_tdata;
-    wire        s_axis_data_tvalid;
+    reg [7:0]  s_axis_data_tdata;
+    reg        s_axis_data_tvalid;
     wire        s_axis_data_tready;
-    wire        s_axis_data_tlast;
+    reg        s_axis_data_tlast;
 
     wire [7:0]  m_axis_data_tdata;
     wire        m_axis_data_tvalid;
-    wire        m_axis_data_tready;
+    reg        m_axis_data_tready;
     wire        m_axis_data_tlast;
 
     // Internal signal to hold read data for comparison
@@ -53,37 +53,158 @@ module top (
     wire scl_o;
     wire scl_t;
 
-    // Instantiate axil_master
-    axis_master #(
-        .FM24CLXX_TYPE(2048),
-        .FM24CLXX_ADDR(3'b000)
-    ) axis (
-        .clk(clk),
-        .rst(rst),
-        .start(start),
-        .mem_address(mem_address),
-        .data_in(data_in),
-        .data_out(data_out),
-        .write_enable(write_enable),
-        .read_enable(read_enable),
-        .busy(busy),
-        .s_axis_cmd_address(s_axis_cmd_address),
-        .s_axis_cmd_start(s_axis_cmd_start),
-        .s_axis_cmd_read(s_axis_cmd_read),
-        .s_axis_cmd_write(s_axis_cmd_write),
-        .s_axis_cmd_write_multiple(s_axis_cmd_write_multiple),
-        .s_axis_cmd_stop(s_axis_cmd_stop),
-        .s_axis_cmd_valid(s_axis_cmd_valid),
-        .s_axis_cmd_ready(s_axis_cmd_ready),
-        .s_axis_data_tdata(s_axis_data_tdata),
-        .s_axis_data_tvalid(s_axis_data_tvalid),
-        .s_axis_data_tready(s_axis_data_tready),
-        .s_axis_data_tlast(s_axis_data_tlast),
-        .m_axis_data_tdata(m_axis_data_tdata),
-        .m_axis_data_tvalid(m_axis_data_tvalid),
-        .m_axis_data_tready(m_axis_data_tready),
-        .m_axis_data_tlast(m_axis_data_tlast)
-    );
+    localparam FM24CLXX_TYPE = 2048;
+    localparam FM24CLXX_ADDR = 3'b000;
+
+    // State definitions
+    typedef enum logic [3:0] {
+        IDLE,
+		START,
+        WRITE_DEV_ADDR,
+        WRITE_MEM_ADDR,
+        WRITE_DATA,
+        STOP_BEFORE_READ,
+        READ_DATA_REPEATED_START,
+        SET_HIGH_READ_ACK,
+        READ_DATA,
+        STOP
+    } state_t;
+
+    state_t current_state = IDLE, next_state;
+
+    // Registers for address and data
+    reg [6:0] device_addr;
+    reg [7:0] mem_addr;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            current_state <= IDLE;
+            busy <= 0;
+        end else begin
+            if (current_state == IDLE) begin
+                busy <= 0;
+            end else begin
+                busy <= 1;
+            end
+            current_state <= next_state;
+        end
+    end
+
+    always_comb begin
+        // Internal registers
+        device_addr = 7'b0;
+        mem_addr = 8'b0;
+        
+        // User outputs
+        data_out = 8'b0;
+        
+        // AXIL signals
+        s_axis_cmd_address        = 7'b0;
+        s_axis_cmd_start          = 1'b0;
+        s_axis_cmd_write          = 1'b0;
+        s_axis_cmd_write_multiple = 1'b0;
+        s_axis_cmd_stop           = 1'b0;
+        s_axis_cmd_valid          = 1'b0;
+
+        s_axis_data_tdata         = 8'b0;
+        s_axis_data_tvalid        = 1'b0;
+        s_axis_data_tlast         = 1'b0;
+
+        m_axis_data_tready        = 1'b0;
+        
+        // Next state of FSM
+        next_state = current_state;
+        
+        case (current_state)
+            IDLE: begin
+                if (start) begin
+                    next_state = START;
+                end
+            end
+			START: begin
+                // Start
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_address = device_addr;
+                s_axis_cmd_start = 1'b1;
+                s_axis_cmd_valid = 1'b1;
+				if (s_axis_cmd_ready) begin
+				    next_state = WRITE_DEV_ADDR;
+				end
+			end
+            WRITE_DEV_ADDR: begin
+                // Write device address with r/w set to write
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_address = device_addr;
+                s_axis_cmd_start = 1'b1;
+                s_axis_cmd_write_multiple = 1'b1; 
+                s_axis_cmd_valid = 1'b1;
+                if (s_axis_cmd_ready) begin
+                    next_state = WRITE_MEM_ADDR;
+                end
+            end
+            WRITE_MEM_ADDR: begin
+                // Send the memory address
+                mem_addr = mem_address;
+                s_axis_data_tdata = mem_addr;
+                s_axis_data_tvalid = 1'b1;
+                if (s_axis_data_tready) begin
+                    if (write_enable) begin
+                        next_state = WRITE_DATA;
+                    end else if (read_enable) begin
+                        next_state = STOP_BEFORE_READ;
+                    end
+                end
+            end
+            WRITE_DATA: begin
+                // Write data
+                s_axis_data_tdata = data_in;
+                s_axis_data_tvalid = 1'b1;
+                s_axis_data_tlast = 1'b1;
+                if (s_axis_data_tready) begin
+                    next_state = STOP;
+                end
+            end
+            STOP_BEFORE_READ: begin
+                // Issue stop command before read
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_address = device_addr;
+                s_axis_cmd_stop = 1'b1;
+                s_axis_cmd_valid = 1'b1;
+                if (s_axis_cmd_ready) begin
+                    next_state = READ_DATA_REPEATED_START;
+                end
+            end
+            READ_DATA_REPEATED_START: begin
+                // Issue repeated start condition for read
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_address = device_addr;
+                s_axis_cmd_start = 1'b1;
+                s_axis_cmd_read = 1'b1;
+                s_axis_cmd_valid = 1'b1;
+                if (s_axis_cmd_ready) begin
+                    next_state = READ_DATA;
+                end
+            end
+            READ_DATA: begin
+                // Read data
+                m_axis_data_tready = 1'b1;
+                if (m_axis_data_tvalid) begin
+                    data_out = m_axis_data_tdata;
+                    next_state = STOP;
+                end
+            end
+            STOP: begin
+                // Issue stop
+                device_addr = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_address = device_addr;
+                s_axis_cmd_stop = 1'b1;
+                s_axis_cmd_valid = 1'b1;
+                if (s_axis_cmd_ready) begin
+                    next_state = IDLE;
+                end
+            end
+        endcase
+    end
 
     // Instantiate i2c_master_axil
     i2c_master i2c (
@@ -126,19 +247,19 @@ module top (
 
     // Initialize internal signals for testing
     typedef enum logic [2:0] {
-        IDLE,
-        START,
+        IDLE_TEST,
+        START_TEST,
         WRITE,
         READ,
         CHECK_READ,
         DONE
     } test_states;
     
-    test_states test_state = IDLE;
+    test_states test_state = IDLE_TEST;
     
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            test_state <= IDLE;
+            test_state <= IDLE_TEST;
             leds <= 8'b0000_0000;
             start <= 0;
             write_enable <= 0;
@@ -147,12 +268,12 @@ module top (
             data_in <= 32'h00000000;
          end else begin
             case (test_state)
-                IDLE: begin
+                IDLE_TEST: begin
                    mem_address <= 8'h04;
                    data_in <= 32'h000000A5;
-                   test_state <= START;
+                   test_state <= START_TEST;
                 end
-                START: begin
+                START_TEST: begin
                     start <= 1;
                     test_state <= WRITE;
                     leds <= 8'b0000_0001;
