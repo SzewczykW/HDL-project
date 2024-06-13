@@ -7,12 +7,23 @@ module tb_top;
   reg rst;
 
   // I2C signals
-  reg scl_reg;
-  wire scl;
-  reg sda_out;
-  wire sda;
-  assign sda = sda_out; // Tri-state SDA line for I2C communication
-  assign scl = scl_reg;
+  wire  scl;
+  wire  sda;
+  wire  sda_i;
+  reg   sda_o;
+  reg   sda_t;
+  
+  reg        write;
+  reg        read;
+  reg  [7:0] word;
+  wire [7:0] leds;
+  
+
+  pullup(scl);
+  pullup(sda);
+
+  assign sda   = sda_t ? 1'bz : sda_o;
+  assign sda_i = sda;
 
   // Clock generation
   initial begin
@@ -21,23 +32,28 @@ module tb_top;
   end
 
   initial begin
-    scl_reg = 1;
-    forever #40000 scl_reg = ~scl_reg; // 12.5kHz clock for I2C
-  end
-
-  initial begin
     rst = 1;
-    sda_out = 1;
     #20;
     rst = 0;
   end
 
-  wire [7:0] leds;
-  top u_top (
+  initial begin
+    word = 8'hA5;
+    
+    write = 0;
+    read  = 0;
+    sda_t = 1'b1;
+    sda_o = 1'bz;
+  end
+
+  top uut (
     .clk(clk),
     .rst(rst),
     .sda(sda),
     .scl(scl),
+    .write(write),
+    .read(read),
+    .word(word),
     .leds(leds)
   );
 
@@ -48,90 +64,82 @@ module tb_top;
     // Wait for some time to ensure proper reset
     #100;
 
-    // Simulate I2C slave responses
     fork
-      begin: i2c_slave
-        i2c_wait_start();
-        i2c_receive_address();
-        i2c_ack(); // ACK address
-        i2c_receive_data();
-        i2c_ack(); // ACK data
-        i2c_receive_data();
-        i2c_ack(); // ACK data
-        i2c_wait_start();
-        i2c_receive_address();
-        i2c_ack(); // ACK address
-        i2c_send_data(8'h55);
-        i2c_ack(); // ACK read data
-      end
+      send_ack_to_master();
+      end_simulation();
+    join_none
+
+    write = 1;
+
+    fork
+      stop_condition_detected(write);
     join
 
-    // End of simulation
-    #1000;
-    $finish;
+    #100;
+    
+    read = 1;
+
+    fork
+      stop_condition_detected(read);
+    join
+
+    // Let everything end peacefully
+    #100;
+
+    // For now it will always fail :D
+    assert (word == leds) else $error("ERROR: data mismatch");
+
   end
-
-  // I2C tasks
-  task i2c_wait_start();
-    begin
-      wait (scl && !sda); // Wait for start condition
-    end
-  endtask
-
-  task i2c_receive_address();
-    integer i;
-    reg [7:0] address;
-    begin
-      for (i = 7; i >= 0; i = i - 1) begin
-        wait (!scl); // Wait for SCL to be low
-        address[i] = sda;
-        wait (scl); // Wait for SCL to be high
-      end
-      $display("Received address: %h", address);
-    end
-  endtask
-
-  task i2c_receive_data();
-    integer i;
-    reg [7:0] data;
-    begin
-      for (i = 7; i >= 0; i = i - 1) begin
-        wait (!scl); // Wait for SCL to be low
-        data[i] = sda;
-        wait (scl); // Wait for SCL to be high
-      end
-      $display("Received data: %h", data);
-    end
-  endtask
-
-  task i2c_send_data(input [7:0] data);
-    integer i;
-    begin
-      for (i = 7; i >= 0; i = i - 1) begin
-        sda_out = data[i];
-        wait (!scl); // Wait for SCL to be low
-        wait (scl); // Wait for SCL to be high
-      end
-      sda_out = 1; // Release SDA after data transmission
-      $display("Sent data: %h", data);
-    end
-  endtask
-
-  task i2c_ack();
-    begin
-      sda_out = 0; // Send ACK
-      #20000;
-      scl_reg = 1;
-      #40000;
-      scl_reg = 0;
-      #20000;
-      sda_out = 1; // Release SDA
-    end
-  endtask
 
   // Monitor outputs
   initial begin
     $monitor("At time %t, leds = %b", $time, leds);
   end
 
+  // Send ack to master every time there were 8 high sdas' and scls'
+  task automatic send_ack_to_master();
+    static int high_count = 0;
+      forever @(posedge clk) begin
+        if (sda && scl) begin
+          high_count = high_count + 1;
+            if (high_count == 8) begin
+              @(negedge scl);  
+              sda_t = 1'b0;
+              sda_o = 1'b0;
+              @(posedge scl);
+              @(negedge scl);
+              sda_t = 1'b1;
+              sda_o = 1'bz;
+              high_count = 0;
+            end
+        end
+      end
+  endtask
+
+  // End simulation if there was 2 stop conditions
+  task end_simulation();
+    automatic int stop_condition_count = 0;
+    automatic bit sda_prev = 0;
+    forever @(posedge clk) begin
+      if (scl && !sda_prev && sda) begin  // Stop condition
+        stop_condition_count = stop_condition_count + 1;
+        if (stop_condition_count == 2) begin
+          $display("Two stop conditions detected at time %t. Ending simulation.", $time);
+          $finish;
+        end
+      end
+      sda_prev = sda;
+    end
+  endtask
+
+  task automatic stop_condition_detected(ref reg rw);
+    static bit sda_prev = 0;
+    forever @(posedge clk) begin
+      if (scl && !sda_prev && sda) begin
+        rw = 0;
+      end
+      sda_prev = sda;
+    end
+  endtask
+  
 endmodule
