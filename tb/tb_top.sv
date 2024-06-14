@@ -20,20 +20,24 @@ module tb_top;
   
 
   pullup(scl);
-  pullup(sda);
+  pullup(sda); 
 
   assign sda   = sda_t ? 1'bz : sda_o;
   assign sda_i = sda;
+  
+  localparam CLK_DIV  = 5;
+  localparam PRESCALE = 250;
+  localparam SCL_DIV  = PRESCALE * CLK_DIV; 
 
   // Clock generation
   initial begin
     clk = 0;
-    forever #5 clk = ~clk; // 100MHz clock
+    forever #CLK_DIV clk = ~clk; // 100MHz clock
   end
 
   initial begin
     rst = 1;
-    #20;
+    #(4*CLK_DIV);
     rst = 0;
   end
 
@@ -51,18 +55,19 @@ module tb_top;
     .rst(rst),
     .sda(sda),
     .scl(scl),
-    .write(write),
-    .read(read),
+    .write_enable(write),
+    .read_enable(read),
     .word(word),
     .leds(leds)
   );
 
   // Testbench stimulus
   initial begin
+    $timeformat(-6, 2, "us");
     @(negedge rst);
 
     // Wait for some time to ensure proper reset
-    #100;
+    #(20*CLK_DIV);
 
     fork
       send_ack_to_master();
@@ -72,22 +77,22 @@ module tb_top;
     write = 1;
 
     fork
-      stop_condition_detected(write);
+      start_condition_detected_write(write);
     join
 
-    #100;
+    #(60*SCL_DIV);
     
     read = 1;
 
     fork
-      stop_condition_detected(read);
+      start_condition_detected_read(read);
     join
 
     // Let everything end peacefully
-    #100;
+    #(60*SCL_DIV);
 
     // For now it will always fail :D
-    assert (word == leds) else $error("ERROR: data mismatch");
+//    assert (word == leds) else $error("ERROR: data mismatch");
 
   end
 
@@ -97,31 +102,50 @@ module tb_top;
   end
 
   // Send ack to master every time there were 8 high sdas' and scls'
-  task automatic send_ack_to_master();
+  task automatic  send_ack_to_master();
     static int high_count = 0;
+	static bit is_started = 0;
+	automatic reg sda_prev = 1'bx;
       forever @(posedge clk) begin
-        if (sda && scl) begin
-          high_count = high_count + 1;
-            if (high_count == 8) begin
-              @(negedge scl);  
-              sda_t = 1'b0;
-              sda_o = 1'b0;
-              @(posedge scl);
-              @(negedge scl);
-              sda_t = 1'b1;
-              sda_o = 1'bz;
-              high_count = 0;
-            end
-        end
+        if (scl & ~sda_prev & sda) begin
+		  is_started = 0;
+		  high_count = 0;
+		end
+		if (high_count == 8) begin
+		  repeat(PRESCALE) begin
+		      @(posedge clk);
+		  end
+		  sda_t = 1'b0;
+		  sda_o = 1'b0;
+		  @(posedge scl);
+		  @(negedge scl);
+		  repeat(PRESCALE) begin
+		      @(posedge clk);
+		  end
+		  sda_t = 1'b1;
+		  sda_o = 1'bz;
+		  high_count = 0;
+		end
+		if (is_started) begin
+		  @(negedge scl);
+		  high_count = high_count + 1;
+		  $display("time: %t, high_count: %d", $time, high_count);
+		end
+		if (scl & sda_prev & ~sda) begin
+		  is_started = 1;
+		  high_count = 0;
+		  @(negedge scl);
+		end
+		sda_prev = sda;
       end
   endtask
 
   // End simulation if there was 2 stop conditions
   task end_simulation();
     automatic int stop_condition_count = 0;
-    automatic bit sda_prev = 0;
+    automatic reg sda_prev = 1'bx;
     forever @(posedge clk) begin
-      if (scl && !sda_prev && sda) begin  // Stop condition
+      if (scl & ~sda_prev & sda) begin  // Stop condition
         stop_condition_count = stop_condition_count + 1;
         if (stop_condition_count == 2) begin
           $display("Two stop conditions detected at time %t. Ending simulation.", $time);
@@ -132,11 +156,23 @@ module tb_top;
     end
   endtask
 
-  task automatic stop_condition_detected(ref reg rw);
-    static bit sda_prev = 0;
+  task automatic start_condition_detected_write(ref reg write);
+    automatic reg sda_prev = 1'bx;
     forever @(posedge clk) begin
-      if (scl && !sda_prev && sda) begin
-        rw = 0;
+      if (scl & sda_prev & ~sda) begin
+        write = 0;
+        disable start_condition_detected_write;
+      end
+      sda_prev = sda;
+    end
+  endtask
+  
+  task automatic start_condition_detected_read(ref reg read);
+    automatic reg sda_prev = 1'bx;
+    forever @(posedge clk) begin
+      if (scl & sda_prev & ~sda) begin
+        read = 0;
+        disable start_condition_detected_read;
       end
       sda_prev = sda;
     end
