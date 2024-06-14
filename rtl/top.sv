@@ -81,7 +81,6 @@ module top (
         READ_DATA_REPEATED_START,
         WAIT_ACK_REPEATED_START,
         READ_DATA,
-        WAIT_NACK_READ_DATA,
         STOP
     } state_t;
 
@@ -139,6 +138,7 @@ module top (
 			START: begin
                 // Start
                 s_axis_cmd_address = {4'b1010, FM24CLXX_ADDR};
+                s_axis_cmd_start = 1'b1;
                 s_axis_cmd_valid = 1'b1;
                 s_axis_cmd_write_multiple = 1'b1;
 				if (s_axis_cmd_ready) begin
@@ -153,6 +153,9 @@ module top (
             WRITE_MEM_ADDR: begin
                 // Send the memory address
                 s_axis_data_tdata = mem_address;
+                if (read_enable_reg) begin
+                    s_axis_data_tlast = 1'b1;
+                end
                 s_axis_data_tvalid = 1'b1;
                 if (s_axis_data_tready & i2c_active) begin
                     next_state = WAIT_ACTION;
@@ -182,8 +185,9 @@ module top (
             READ_DATA_REPEATED_START: begin
                 // Issue repeated start condition for read
                 s_axis_cmd_address = {4'b1010, FM24CLXX_ADDR};;
-                s_axis_cmd_read = 1'b1;
+                s_axis_cmd_start = 1'b1;
                 s_axis_cmd_valid = 1'b1;
+                s_axis_cmd_read = 1'b1;
                 if (s_axis_cmd_ready) begin
                     next_state = WAIT_ACK_REPEATED_START;
                 end
@@ -197,11 +201,6 @@ module top (
                 // Read data
                 m_axis_data_tready = 1'b1;
                 if (m_axis_data_tvalid & i2c_active) begin
-                    next_state = WAIT_NACK_READ_DATA;
-                end
-            end
-            WAIT_NACK_READ_DATA: begin
-                if (i2c_missed_ack) begin
                     next_state = STOP;
                 end
             end
